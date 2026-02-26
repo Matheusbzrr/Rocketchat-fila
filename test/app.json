@@ -1,0 +1,19 @@
+{
+    "id": "4db4bd5c-77a8-4a66-8267-ed5eb0f43f79",
+    "version": "2.0.0",
+    "requiredApiVersion": "^1.44.0",
+    "iconFile": "icon.png",
+    "author": {
+        "name": "Matheus",
+        "homepage": "test.com",
+        "support": "test.com"
+    },
+    "name": "Test",
+    "nameSlug": "test",
+    "classFile": "TestApp.ts",
+    "description": "Test",
+    "implements": [
+        "IPostMessageSent",
+        "IPostLivechatAgentAssigned"
+    ]
+}

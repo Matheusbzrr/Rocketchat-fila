@@ -1,0 +1,51 @@
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    command: >
+      mongod --replSet rs0 --bind_ip_all
+
+  mongo-init:
+    image: mongo:7.0
+    container_name: mongo-init
+    depends_on:
+      - mongo
+    entrypoint: >
+      bash -c "
+      sleep 5 &&
+      mongosh --host mongo:27017 --eval '
+        rs.initiate({
+          _id: \"rs0\",
+          members: [{ _id: 0, host: \"mongo:27017\" }]
+        })
+      '"
+
+  rocketchat:
+    image: registry.rocket.chat/rocketchat/rocket.chat:8.1.1
+    container_name: rocketchat
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      MONGO_URL: mongodb://mongo:27017/rocketchat?replicaSet=rs0
+      MONGO_OPLOG_URL: mongodb://mongo:27017/local?replicaSet=rs0
+      ROOT_URL: http://localhost:3000
+      PORT: 3000
+    depends_on:
+      - mongo
+      - mongo-init
+
+  rc-apps:
+    image: node:22.16.0-alpine
+    container_name: rc-apps
+    volumes:
+      - ./:/app
+    working_dir: /app
+    tty: true
+    entrypoint: sh
+volumes:
+  mongo_data:
