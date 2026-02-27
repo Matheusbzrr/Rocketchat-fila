@@ -40,6 +40,14 @@ export class TesteApp
         super(info, logger, accessors);
     }
 
+    /**
+     * instancia o serviço de persistência dedicado do App.
+     * como os acessores de persistência são injetados pelo framework apenas durante a execução
+     * de um evento, este método garante a criação do serviço com o contexto correto.
+     * @param read acessor de leitura do workspace
+     * @param persistence acessor de gravação de dados
+     * @returns uma nova instancia de PersistenceService
+     */
     private getPersistenceService(
         read: IRead,
         persistence: IPersistence,
@@ -47,6 +55,14 @@ export class TesteApp
         return new PersistenceService(persistence, read.getPersistenceReader());
     }
 
+    /**
+     * fabrica e configura o serviço de integração com o Omnichannel.
+     * realiza a busca assincrona das credenciais nas configurações do App e valida
+     * a disponibilidade dos dados antes de instanciar o serviço.
+     * @param read acessor de leitura para buscar as configurações
+     * @param http acessor para realizar chamadas REST à API do Rocket.Chat
+     * @returns instancia configurada do LivechatService ou null caso faltem credenciais
+     */
     private async getLivechatService(
         read: IRead,
         http: IHttp,
