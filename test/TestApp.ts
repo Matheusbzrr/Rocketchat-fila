@@ -12,39 +12,64 @@ import {
     ILivechatEventContext,
     ILivechatRoom,
     IPostLivechatAgentAssigned,
+    IPostLivechatRoomClosed,
 } from "@rocket.chat/apps-engine/definition/livechat";
 import {
     IMessage,
     IPostMessageSent,
 } from "@rocket.chat/apps-engine/definition/messages";
 import { IAppInfo } from "@rocket.chat/apps-engine/definition/metadata";
-import { getCredentials, registerSettings } from "./registerSettings";
-import { LivechatService } from "./LivechatService";
-import { secondsToMinutes } from "./dateHelper";
-import {
-    RocketChatAssociationModel,
-    RocketChatAssociationRecord,
-} from "@rocket.chat/apps-engine/definition/metadata";
+import { getCredentials, registerSettings } from "./settings/registerSettings";
+import { LivechatService } from "./services/LivechatService";
+import { secondsToMinutes } from "./helpers/dateHelper";
+import { PersistenceService } from "./services/QueuePersistenceService";
 
 /**
  * aplicativo principal para gestão proativa de fila no Omnichannel.
  * intercepta mensagens e atribuições de agentes para manter o visitante
  * atualizado sobre sua posição e tempo estimado de espera
  */
-
 export class TesteApp
     extends App
-    implements IPostMessageSent, IPostLivechatAgentAssigned
+    implements
+        IPostMessageSent,
+        IPostLivechatAgentAssigned,
+        IPostLivechatRoomClosed
 {
     constructor(info: IAppInfo, logger: ILogger, accessors: IAppAccessors) {
         super(info, logger, accessors);
+    }
+
+    private getPersistenceService(
+        read: IRead,
+        persistence: IPersistence,
+    ): PersistenceService {
+        return new PersistenceService(persistence, read.getPersistenceReader());
+    }
+
+    private async getLivechatService(
+        read: IRead,
+        http: IHttp,
+    ): Promise<LivechatService | null> {
+        const credentials = await getCredentials(read);
+        if (!credentials) {
+            this.getLogger().error(
+                "Credenciais do Omnichannel não configuradas.",
+            );
+            return null;
+        }
+
+        return new LivechatService(http, {
+            token: credentials.token,
+            userId: credentials.userId,
+            numberDays: credentials.number_days,
+        });
     }
 
     /**
      * registra as configurações customizadas do App no painel administrativo do RocketChat.
      * @param configuration acessor para extensão da configuração do App
      */
-
     protected async extendConfiguration(
         configuration: IConfigurationExtend,
     ): Promise<void> {
@@ -68,6 +93,11 @@ export class TesteApp
         persistence: IPersistence,
         modify: IModify,
     ): Promise<void> {
+        const persistenceService = this.getPersistenceService(
+            read,
+            persistence,
+        );
+
         const logger = this.getLogger();
 
         // travas de segurança para evitar loops infinitos e processamento desnecessário
@@ -88,30 +118,20 @@ export class TesteApp
         if (!room || room.servedBy || !room.department) return;
 
         // prevenção de spam: verifica se o visitante já recebeu o aviso inicial
-        const association = new RocketChatAssociationRecord(
-            RocketChatAssociationModel.ROOM,
-            `fila-iniciada-${room.id}`,
-        );
-        const alreadyNotified = await read
-            .getPersistenceReader()
-            .readByAssociation(association);
-        if (alreadyNotified && alreadyNotified.length > 0) return;
+        if (await persistenceService.isRoomNotified(room.id)) return;
 
         // regras de Negócio e lógica de Fila
         const credentials = await getCredentials(read);
         if (!credentials) return;
 
-        const service = new LivechatService(http, {
-            token: credentials.token,
-            userId: credentials.userId,
-            numberDays: credentials.number_days,
-        });
+        const service = await this.getLivechatService(read, http);
+        if (!service) return;
 
         const position = await service.getQueuePosition(
             room.department.id,
             room.id,
         );
-        // interrompe se não encontrou a posição ou se a fila for menor que o gatilho configurado
+
         if (position === null || position < credentials.min_queue_size) return;
 
         const avgSeconds = await service.getAvgWaitingTime(room.department.id);
@@ -120,14 +140,10 @@ export class TesteApp
             : 0;
 
         // registro de estado: marca a sala como notificada para evitar reenvios na mesma sessão
-        await persistence.createWithAssociation({ position }, association);
+        await persistenceService.markAsNotified(room.id);
 
         // registra a posição atual para servir de base de comparação nos eventos futuros de atualização
-        const positionAssoc = new RocketChatAssociationRecord(
-            RocketChatAssociationModel.ROOM,
-            `last-position-${room.id}`,
-        );
-        await persistence.createWithAssociation({ position }, positionAssoc);
+        await persistenceService.updateRoomPosition(room.id, position);
 
         // envia notificação
         const msg = `Olá! Você entrou na fila de atendimento na posição ${position}º. Tempo estimado: ~${estimatedMinutes} minuto(s).`;
@@ -155,6 +171,11 @@ export class TesteApp
         modify: IModify,
     ): Promise<void> {
         const logger = this.getLogger();
+        const persistenceService = this.getPersistenceService(
+            read,
+            persistence,
+        );
+
         logger.info(
             `Evento de Agente Atribuído iniciado para a sala: ${data.room.id}`,
         );
@@ -174,11 +195,8 @@ export class TesteApp
             return;
         }
 
-        const service = new LivechatService(http, {
-            token: credentials.token,
-            userId: credentials.userId,
-            numberDays: credentials.number_days,
-        });
+        const service = await this.getLivechatService(read, http);
+        if (!service) return;
 
         // identifica os visitantes restantes no departamento
         logger.info(`Buscando fila para o departamento: ${departmentId}`);
@@ -201,19 +219,9 @@ export class TesteApp
             const currentRoom = queuedRooms[i];
             const newPosition = i + 1; // fila real
 
-            // recupera a posição enviada na notificação anterior do usuario
-            const association = new RocketChatAssociationRecord(
-                RocketChatAssociationModel.ROOM,
-                `last-position-${currentRoom._id}`,
-            );
-
-            const lastData = await read
-                .getPersistenceReader()
-                .readByAssociation(association);
-            let lastPosition = 0;
-            if (lastData && lastData.length > 0) {
-                lastPosition = (lastData[0] as any).position;
-            }
+            const lastPosition =
+                (await persistenceService.getLastPosition(currentRoom._id)) ??
+                0;
 
             logger.info(
                 `Visitante ${currentRoom._id} - Posição antiga: ${lastPosition} | Nova: ${newPosition}`,
@@ -235,17 +243,46 @@ export class TesteApp
                         modify,
                     );
 
-                    // atualiza com a nova posição
-                    await persistence.updateByAssociation(
-                        association,
-                        { position: newPosition },
-                        true,
+                    // Atualização de posição na fila
+                    await persistenceService.updateRoomPosition(
+                        currentRoom._id,
+                        newPosition,
                     );
+
                     logger.info(
-                        `Mensagem de atualização enviada para ${currentRoom._id} (Novo status: ${newPosition}º)`,
+                        `Mensagem de atualização enviada para ${currentRoom._id}`,
                     );
                 }
             }
         }
+    }
+
+    /**
+     * trigger disparado automaticamente quando uma sala de Livechat é encerrada.
+     * utilizado para realizar a limpeza (housekeeping) dos dados persistidos do App,
+     * removendo travas de notificação e históricos de posição para liberar espaço
+     * e garantir que novos contatos do mesmo visitante iniciem com o estado limpo.
+     * * @param context objeto contendo os dados da sala que foi fechada
+     * @param read acessor para leitura de dados do workspace
+     * @param http acessor para chamadas HTTP
+     * @param persistence acessor para remover os dados vinculados à sala
+     */
+    public async executePostLivechatRoomClosed(
+        context: ILivechatRoom,
+        read: IRead,
+        http: IHttp,
+        persistence: IPersistence,
+    ): Promise<void> {
+        const persistenceService = this.getPersistenceService(
+            read,
+            persistence,
+        );
+
+        // remove todas as associações (fila-iniciada e last-position) vinculadas ao ID da sala
+        await persistenceService.clearRoomData(context.id);
+
+        this.getLogger().info(
+            `Dados da sala ${context.id} limpos com sucesso após o encerramento do chat.`,
+        );
     }
 }

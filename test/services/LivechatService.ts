@@ -3,13 +3,13 @@ import {
     IModify,
     IRead,
 } from "@rocket.chat/apps-engine/definition/accessors";
-import { getDateRange } from "./dateHelper";
-import { ILivechatServiceConfig } from "./interfaces/LivechatServiceConfig";
-import { IAvgWaitingTimeResponse } from "./interfaces/IAvgWaitingTimeResponse";
+import { getDateRange } from "../helpers/dateHelper";
+import { ILivechatServiceConfig } from "../interfaces/LivechatServiceConfig";
+import { IAvgWaitingTimeResponse } from "../interfaces/IAvgWaitingTimeResponse";
 import {
     ILivechatRoomItem,
     ILivechatRoomsResponse,
-} from "./interfaces/ILivechatRoomsResponse";
+} from "../interfaces/ILivechatRoomsResponse";
 import { ILivechatRoom } from "@rocket.chat/apps-engine/definition/livechat";
 
 const ROCKET_URL = "http://localhost:3000";
