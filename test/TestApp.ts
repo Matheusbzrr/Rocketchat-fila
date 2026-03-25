@@ -165,15 +165,19 @@ export class TesteApp
         const service = await this.getLivechatService(read, http);
         if (!service) return;
 
-        let targetDepartmentId = context.room.department?.id;
+        // Acessamos a sala do contexto para verificar o departamento atualizado
+        const room = context.room as ILivechatRoom;
+        let targetDepartmentId = room.department?.id;
 
-        // Caso a transferência seja direta para um agente, resolvemos o departamento dele para o cálculo
-        if (!targetDepartmentId && context.toAgent) {
+        // Se a sala não tem departamento definido, mas foi transferida para um agente (nominal)
+        if (!targetDepartmentId && room.servedBy) {
+            // Buscamos o departamento vinculado ao agente que agora serve a sala
             targetDepartmentId =
-                (await service.getAgentDepartmentId(context.toAgent.id)) ??
+                (await service.getAgentDepartmentId(room.servedBy._id)) ??
                 undefined;
         }
 
+        // Se mesmo assim não houver departamento, não há como calcular fila/tempo médio
         if (!targetDepartmentId) return;
 
         const persistenceService = this.getPersistenceService(
@@ -181,11 +185,11 @@ export class TesteApp
             persistence,
         );
 
-        // Limpamos os dados antigos para que a nova posição na nova fila seja disparada corretamente
-        await persistenceService.clearRoomData(context.room.id);
+        // Limpamos os dados antigos para que a nova notificação seja permitida
+        await persistenceService.clearRoomData(room.id);
 
         await this.notifyQueueStatus(
-            context.room as ILivechatRoom,
+            room,
             targetDepartmentId,
             read,
             modify,
@@ -193,7 +197,6 @@ export class TesteApp
             service,
         );
     }
-
     /**
      * Trigger para quando a fila anda (Agente atribuído).
      */
