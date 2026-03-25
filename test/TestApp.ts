@@ -194,7 +194,7 @@ export class TesteApp
 
         // se nunca foi notificado, pode ser:
         // - entrou direto sem fila (capacity livre)
-        // - ou foi transferido sem passar pela fila
+        // - ou foi transferido sem passar pela fila aaaaaaa
         const alreadyNotified = await persistenceService.isRoomNotified(
             data.room.id,
         );
