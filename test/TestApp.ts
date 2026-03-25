@@ -192,6 +192,28 @@ export class TesteApp
             persistence,
         );
 
+        // se nunca foi notificado, pode ser:
+        // - entrou direto sem fila (capacity livre)
+        // - ou foi transferido sem passar pela fila
+        const alreadyNotified = await persistenceService.isRoomNotified(
+            data.room.id,
+        );
+
+        if (!alreadyNotified) {
+            const service = await this.getLivechatService(read, http);
+            if (!service) return;
+
+            const msg = `Olá! Seu atendimento foi direcionado para um agente. Em breve você será atendido.`;
+
+            await service.sendMessageToVisitor(data.room, msg, read, modify);
+
+            await persistenceService.markAsNotified(data.room.id);
+
+            this.getLogger().info(
+                `Usuário transferido ou atendido direto notificado. Sala: ${data.room.id}`,
+            );
+        }
+
         logger.info(
             `Evento de Agente Atribuído iniciado para a sala: ${data.room.id}`,
         );
