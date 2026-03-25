@@ -131,10 +131,15 @@ export class TesteApp
             .getById(message.room.id)) as ILivechatRoom;
 
         // ignora se a sala já estiver em atendimento (não está mais na fila) ou sem departamento
-        if (!room || room.servedBy || !room.department) return;
+        if (!room || room.servedBy) return;
+
+        if (!room.department) {
+            logger.warn(`Sala ${room.id} sem departamento ainda.`);
+            return;
+        }
 
         // prevenção de spam: verifica se o visitante já recebeu o aviso inicial
-        if (await persistenceService.isRoomNotified(room.id)) return;
+        if (await persistenceService.isQueueNotified(room.id)) return;
 
         // regras de Negócio e lógica de Fila
         const credentials = await getCredentials(read);
@@ -156,7 +161,7 @@ export class TesteApp
             : 0;
 
         // registro de estado: marca a sala como notificada para evitar reenvios na mesma sessão
-        await persistenceService.markAsNotified(room.id);
+        await persistenceService.markQueueNotified(room.id);
 
         // registra a posição atual para servir de base de comparação nos eventos futuros de atualização
         await persistenceService.updateRoomPosition(room.id, position);
@@ -187,31 +192,42 @@ export class TesteApp
         modify: IModify,
     ): Promise<void> {
         const logger = this.getLogger();
+
         const persistenceService = this.getPersistenceService(
             read,
             persistence,
         );
 
-        // se nunca foi notificado, pode ser:
-        // - entrou direto sem fila (capacity livre)
-        // - ou foi transferido sem passar pela fila aaaaaaa
-        const alreadyNotified = await persistenceService.isRoomNotified(
-            data.room.id,
-        );
+        // 🔹 Notificação de atribuição (transferência ou direto)
+        const alreadyAssignedNotified =
+            await persistenceService.isAssignedNotified(data.room.id);
 
-        if (!alreadyNotified) {
+        if (!alreadyAssignedNotified) {
             const service = await this.getLivechatService(read, http);
             if (!service) return;
 
-            const msg = `Olá! Seu atendimento foi direcionado para um agente. Em breve você será atendido.`;
+            const departmentId = data.room.department?.id;
+
+            let msg = `Olá! Seu atendimento foi direcionado para um agente.`;
+
+            // 🔥 AQUI entra teu diferencial
+            if (departmentId) {
+                const avgSeconds =
+                    await service.getAvgWaitingTime(departmentId);
+                const avgMinutes = avgSeconds
+                    ? secondsToMinutes(avgSeconds)
+                    : null;
+
+                if (avgMinutes) {
+                    msg += ` Tempo médio de espera neste setor: ~${avgMinutes} minuto(s).`;
+                }
+            }
 
             await service.sendMessageToVisitor(data.room, msg, read, modify);
 
-            await persistenceService.markAsNotified(data.room.id);
+            await persistenceService.markAssignedNotified(data.room.id);
 
-            this.getLogger().info(
-                `Usuário transferido ou atendido direto notificado. Sala: ${data.room.id}`,
-            );
+            logger.info(`Atribuição/transferência notificada: ${data.room.id}`);
         }
 
         logger.info(

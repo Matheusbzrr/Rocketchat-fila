@@ -9,11 +9,26 @@ import {
 
 import { IQueuePersistenceData } from "../interfaces/IQueuePersistenceData";
 
+import {
+    IPersistence,
+    IPersistenceRead,
+} from "@rocket.chat/apps-engine/definition/accessors";
+import {
+    RocketChatAssociationModel,
+    RocketChatAssociationRecord,
+} from "@rocket.chat/apps-engine/definition/metadata";
+
+import { IQueuePersistenceData } from "../interfaces/IQueuePersistenceData";
+
 export class PersistenceService {
     constructor(
         private readonly persistence: IPersistence,
         private readonly persistenceRead: IPersistenceRead,
     ) {}
+
+    // ==============================
+    // POSITION
+    // ==============================
 
     public async updateRoomPosition(
         roomId: string,
@@ -23,6 +38,7 @@ export class PersistenceService {
             RocketChatAssociationModel.ROOM,
             `last-position-${roomId}`,
         );
+
         const data: IQueuePersistenceData = { position };
 
         await this.persistence.updateByAssociation(association, data, true);
@@ -38,47 +54,82 @@ export class PersistenceService {
             await this.persistenceRead.readByAssociation(association);
 
         if (result && "position" in result) {
-            const data = result as IQueuePersistenceData;
-            return data.position ?? null;
+            return (result as IQueuePersistenceData).position ?? null;
         }
 
         return null;
     }
 
-    public async isRoomNotified(roomId: string): Promise<boolean> {
+    // ==============================
+    // QUEUE NOTIFICATION
+    // ==============================
+
+    public async isQueueNotified(roomId: string): Promise<boolean> {
         const association = new RocketChatAssociationRecord(
             RocketChatAssociationModel.ROOM,
-            `fila-iniciada-${roomId}`,
+            `queue-notified-${roomId}`,
         );
+
         const result =
             await this.persistenceRead.readByAssociation(association);
         return result && result.length > 0;
     }
 
-    public async markAsNotified(roomId: string): Promise<void> {
+    public async markQueueNotified(roomId: string): Promise<void> {
         const association = new RocketChatAssociationRecord(
             RocketChatAssociationModel.ROOM,
-            `fila-iniciada-${roomId}`,
+            `queue-notified-${roomId}`,
         );
+
         await this.persistence.createWithAssociation(
-            { notified: true },
+            { value: true },
             association,
         );
     }
 
+    // ==============================
+    // ASSIGNMENT (transfer / direct)
+    // ==============================
+
+    public async isAssignedNotified(roomId: string): Promise<boolean> {
+        const association = new RocketChatAssociationRecord(
+            RocketChatAssociationModel.ROOM,
+            `assigned-notified-${roomId}`,
+        );
+
+        const result =
+            await this.persistenceRead.readByAssociation(association);
+        return result && result.length > 0;
+    }
+
+    public async markAssignedNotified(roomId: string): Promise<void> {
+        const association = new RocketChatAssociationRecord(
+            RocketChatAssociationModel.ROOM,
+            `assigned-notified-${roomId}`,
+        );
+
+        await this.persistence.createWithAssociation(
+            { value: true },
+            association,
+        );
+    }
+
+    // ==============================
+    // CLEANUP
+    // ==============================
+
     public async clearRoomData(roomId: string): Promise<void> {
         const associations = [
-            new RocketChatAssociationRecord(
-                RocketChatAssociationModel.ROOM,
-                `fila-iniciada-${roomId}`,
-            ),
-            new RocketChatAssociationRecord(
-                RocketChatAssociationModel.ROOM,
-                `last-position-${roomId}`,
-            ),
+            `queue-notified-${roomId}`,
+            `assigned-notified-${roomId}`,
+            `last-position-${roomId}`,
         ];
 
-        for (const assoc of associations) {
+        for (const key of associations) {
+            const assoc = new RocketChatAssociationRecord(
+                RocketChatAssociationModel.ROOM,
+                key,
+            );
             await this.persistence.removeByAssociation(assoc);
         }
     }
