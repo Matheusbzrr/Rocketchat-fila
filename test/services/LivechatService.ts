@@ -128,4 +128,24 @@ export class LivechatService {
 
         await modify.getCreator().finish(builder);
     }
+
+    /**
+     * Resolve o ID do departamento de um agente específico.
+     * Utilizado para calcular o tempo médio de fila quando o cliente é transferido para um agente.
+     */
+    public async getAgentDepartmentId(agentId: string): Promise<string | null> {
+        const url = `${ROCKET_URL}/api/v1/livechat/users/agent/${agentId}`;
+        try {
+            const response = await this.http.get(url, {
+                headers: this.headers,
+            });
+            const data = response.data as any;
+            // Tenta obter o departamento vinculado ao perfil do agente
+            return (
+                data?.user?.departmentId || data?.agent?.departmentId || null
+            );
+        } catch (e) {
+            return null;
+        }
+    }
 }
